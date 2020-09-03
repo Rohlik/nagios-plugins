@@ -54,7 +54,7 @@ debug "current timestamp: $now"
 
 warning_threshold=
 homedir=
-refresh=0
+refresh=1
 for arg in $*; do
     case $arg in
         "-w")
