@@ -44,7 +44,7 @@ function debug () {
 }
 
 function showUsage () {
-  echo "Usage: $0 [--no-refresh] [-w <num_days>] [--gnupg-homedir <path>] <key_id>"
+  echo "Usage: $0 [--no-refresh] [-w <num_days>] [--gnupg-homedir <path>]"
 }
 
 debug "got args: $*"
@@ -54,7 +54,7 @@ debug "current timestamp: $now"
 
 warning_threshold=
 homedir=
-refresh=1
+refresh=0
 for arg in $*; do
     case $arg in
         "-w")
@@ -105,48 +105,51 @@ for arg in $*; do
     esac
 done
 
-if [ -z "$1" ]; then
-    echo "UNKNOWN: must provide a key ID"
-    showUsage
-    exit $STATE_UNKNOWN
-fi
-key="$1"
+keys=`gpg2 --with-colons --fixed-list-mode --list-keys | grep "^pub:" | cut -d':' -f5 | tr '\n' ' '`
 
 # GPG is too stupid to error out when asked to refresh a key that's not in the
 # local keyring so we need to perform another call to verify this first.
-output=$( gpg $homedir --list-key -- "$key" 2>&1 >/dev/null )
-if [ $? -ne 0 ]; then
-    echo "UNKNOWN: $output"
-    exit $STATE_UNKNOWN
-fi
-
-# Refresh key if not disabled
-if [ $refresh -eq 1 ]; then
-    output=$( gpg $homedir --refresh -- "$key" 2>&1 >/dev/null )
-    if [ $? -ne 0 ]; then
-        echo "UNKNOWN: $output"
-        exit $STATE_UNKNOWN
-    fi
-fi
-
-if [ "$(gpg $homedir --check-sig -- "$key" 2>/dev/null | grep "^rev!")" != "" ]; then
-    echo "CRITICAL: key '$key' has been revoked!"
-    exit $STATE_CRITICAL
-fi
-
-for expiry in $(gpg $homedir --with-colons --fixed-list-mode --list-key -- "$key" 2>/dev/null | awk -F: '/^pub:/{ print $7 }');
-do
-    debug "expiry value: $expiry"
-
-    if [ "$now" -gt "$expiry" ]; then
-        printf "CRITICAL: %s has expired on %s\n" "$key" "$(date -d "$expiry seconds")"
-        exit $STATE_CRITICAL
-    fi;
-    if [ -n "$warning_threshold" ] && [ "$warning_threshold" -gt "$expiry" ]; then
-        remaining=$(( ($expiry-$now) / $SECS_IN_DAY ))
-        printf "WARNING: %s expires in %s days\n" "$key" "$remaining"
-        exit $STATE_WARNING
-    fi
+for key in $keys; do
+output=$( gpg2 $homedir --list-key -- "$key" 2>&1 >/dev/null )
+        if [ $? -ne 0 ]; then
+            echo "UNKNOWN: $output"
+            exit $STATE_UNKNOWN
+        fi
 done
 
-echo "OK: key '$key' has not expired."
+# Refresh key if not disabled
+for key in $keys; do
+        if [ $refresh -eq 1 ]; then
+            output=$( gpg2 $homedir --refresh -- "$key" 2>&1 >/dev/null )
+            if [ $? -ne 0 ]; then
+                echo "UNKNOWN: $output"
+                exit $STATE_UNKNOWN
+            fi
+        fi
+done
+
+for key in $keys; do
+        if [ "$(gpg2 $homedir --check-sig -- "$key" 2>/dev/null | grep "^rev!")" != "" ]; then
+            echo "CRITICAL: key '$key' has been revoked!"
+            exit $STATE_CRITICAL
+        fi
+done
+
+for key in $keys; do
+        for expiry in $(gpg2 $homedir --with-colons --fixed-list-mode --list-key -- "$key" 2>/dev/null | awk -F: '/^pub:/{ print $7 }');
+        do
+            debug "expiry value: $expiry"
+
+            if [ "$now" -gt "$expiry" ]; then
+                printf "CRITICAL: %s has expired on %s\n" "$key" "$(date -d "$expiry seconds")"
+                exit $STATE_CRITICAL
+            fi
+            if [ -n "$warning_threshold" ] && [ "$warning_threshold" -gt "$expiry" ]; then
+                remaining=$(( ($expiry-$now) / $SECS_IN_DAY ))
+                printf "WARNING: %s expires in %s days\n" "$key" "$remaining"
+                exit $STATE_WARNING
+            fi
+        done
+done
+
+echo "OK: key '$keys' has not expired."
