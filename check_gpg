@@ -6,13 +6,13 @@
 # note: the plugin will issue a critical state if the required key has been
 # revoked.
 #
-# usage: check_gpg [--no-refresh] [-w <num_days>] [--gnupg-homedir <path>] <key_id>
+# usage: check_gpg [--no-refresh] [-w <num_days>] [--gnupg-homedir <path>]
 #
-# <key_id> is any PGP key ID that GnuPG accepts with "gpg --list-key <key_id>"
 #
-# The option -w parameter lets you specify the number of days within which key
-# expiry will trigger a warning. e.g. if <key_id> expires within <num_days>
-# days, make nagios issue a warning.
+#
+# The option -c parameter lets you specify the number of days within which key
+# expiry will trigger a critical. e.g. if <key_id> expires within <num_days>
+# days, make nagios issue a critical.
 #
 # num_days must be an integer value
 #
@@ -44,7 +44,7 @@ function debug () {
 }
 
 function showUsage () {
-  echo "Usage: $0 [--no-refresh] [-w <num_days>] [--gnupg-homedir <path>]"
+  echo "Usage: $0 [--no-refresh] [-c <num_days>] [--gnupg-homedir <path>]"
 }
 
 debug "got args: $*"
@@ -52,24 +52,24 @@ debug "got args: $*"
 now=$(date +%s)
 debug "current timestamp: $now"
 
-warning_threshold=
+critical_threshold=
 homedir=
 refresh=1
 for arg in $*; do
     case $arg in
-        "-w")
+        "-c")
             if [ -z "$2" ]; then
-                echo "UNKNOWN: argument -w got no value. integer needed"
+                echo "UNKNOWN: argument -c got no value. integer needed"
                 showUsage
                 exit $STATE_UNKNOWN
             fi
             if [ "`echo $2 | egrep ^[[:digit:]]+$`" = "" ]; then
-                echo "UNKNOWN: invalid value '$2' passed to -w. integer needed"
+                echo "UNKNOWN: invalid value '$2' passed to -c. integer needed"
                 showUsage
                 exit $STATE_UNKNOWN
             fi
-            warning_threshold=$(( $now + ($2*$SECS_IN_DAY) ))
-            debug "setting warning_threshold to '$warning_threshold'"
+            critical_threshold=$(( $now + ($2*$SECS_IN_DAY) ))
+            debug "setting critical_threshold to '$critical_threshold'"
 
             shift 2
         ;;
@@ -106,6 +106,10 @@ for arg in $*; do
 done
 
 keys=`gpg2 --with-colons --fixed-list-mode --list-keys | grep "^pub:" | cut -d':' -f5 | tr '\n' ' '`
+if [ -z "$keys" ]; then
+        echo "There are no PGP keys. Is it good?"
+        exit $STATE_UNKNOWN
+fi
 
 # GPG is too stupid to error out when asked to refresh a key that's not in the
 # local keyring so we need to perform another call to verify this first.
@@ -144,12 +148,12 @@ for key in $keys; do
                 printf "CRITICAL: %s has expired on %s\n" "$key" "$(date -d "$expiry seconds")"
                 exit $STATE_CRITICAL
             fi
-            if [ -n "$warning_threshold" ] && [ "$warning_threshold" -gt "$expiry" ]; then
+            if [ -n "$critical_threshold" ] && [ "$critical_threshold" -gt "$expiry" ]; then
                 remaining=$(( ($expiry-$now) / $SECS_IN_DAY ))
-                printf "WARNING: %s expires in %s days\n" "$key" "$remaining"
-                exit $STATE_WARNING
+                printf "CRITICAL: %s expires in %s days\n" "$key" "$remaining"
+                exit $STATE_CRITICAL
             fi
         done
 done
 
-echo "OK: key '$keys' has not expired."
+echo "OK: key $keys has not expired."
